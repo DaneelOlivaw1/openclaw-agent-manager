@@ -31,11 +31,15 @@ export interface DiffInfo {
 
 export interface ChatEvent {
   runId: string;
-  agentId: string;
-  state: "delta" | "final" | "error";
-  text?: string;
-  message?: unknown;
-  sessionKey?: string;
+  sessionKey: string;
+  seq: number;
+  state: "delta" | "final" | "aborted" | "error";
+  message?: {
+    role: string;
+    content: Array<{ type: string; text: string }>;
+    timestamp?: number;
+  };
+  errorMessage?: string;
 }
 
 export interface CronJob {
@@ -98,15 +102,16 @@ export const config = {
 // ============ Chat ============
 
 export const chat = {
-  send: (agentId: string, message: string, sessionKey?: string) =>
-    invoke<{ runId: string; sessionKey?: string }>("chat_send", {
-      agent_id: agentId,
-      message,
+  send: (sessionKey: string, message: string, idempotencyKey: string) =>
+    invoke<{ runId: string; status: string }>("chat_send", {
       session_key: sessionKey,
+      message,
+      idempotency_key: idempotencyKey,
     }),
   history: (sessionKey: string) =>
-    invoke<unknown[]>("chat_history", { session_key: sessionKey }),
-  abort: (runId: string) => invoke<void>("chat_abort", { run_id: runId }),
+    invoke<{ sessionKey: string; sessionId: string; messages: unknown[]; thinkingLevel: string }>("chat_history", { session_key: sessionKey }),
+  abort: (sessionKey: string, runId?: string) =>
+    invoke<void>("chat_abort", { session_key: sessionKey, run_id: runId }),
 };
 
 // ============ Sessions ============

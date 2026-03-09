@@ -111,16 +111,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     set({ tabs: updatedTabs });
 
     try {
+      const idempotencyKey = `${tab.sessionKey}-${Date.now()}`;
       const result = await chatApi.send(
-        tab.agentId,
+        tab.sessionKey,
         message,
-        tab.isNew ? undefined : tab.sessionKey,
+        idempotencyKey,
       );
       const newTabs = [...get().tabs];
       newTabs[activeTabIndex] = {
         ...newTabs[activeTabIndex],
-        runId: result.runId,
-        sessionKey: result.sessionKey || newTabs[activeTabIndex].sessionKey,
+        runId: idempotencyKey,
         isNew: false,
       };
       set({ tabs: newTabs });
@@ -139,7 +139,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const tab = tabs[activeTabIndex];
     if (tab?.runId) {
       try {
-        await chatApi.abort(tab.runId);
+        await chatApi.abort(tab.sessionKey, tab.runId);
       } catch {
         // Ignore abort errors
       }
@@ -148,12 +148,24 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   loadHistory: async (sessionKey) => {
     try {
-      const history = await chatApi.history(sessionKey);
-      const messages: ChatMessage[] = (history as Record<string, unknown>[]).map((msg) => ({
-        role: (msg.role as string) === "user" ? "user" as const : "assistant" as const,
-        content: (msg.content as string) || (msg.text as string) || "",
-        timestamp: (msg.timestamp as number) || Date.now(),
-      }));
+      const result = await chatApi.history(sessionKey);
+      const messages: ChatMessage[] = (result.messages as Record<string, unknown>[]).map((msg) => {
+        const content = msg.content;
+        let text = "";
+        if (typeof content === "string") {
+          text = content;
+        } else if (Array.isArray(content)) {
+          text = (content as Array<{ type: string; text: string }>)
+            .filter((c) => c.type === "text")
+            .map((c) => c.text)
+            .join("");
+        }
+        return {
+          role: (msg.role as string) === "user" ? "user" as const : "assistant" as const,
+          content: text,
+          timestamp: (msg.timestamp as number) || Date.now(),
+        };
+      });
       set((state) => {
         const tabs = [...state.tabs];
         const tabIndex = tabs.findIndex((t) => t.sessionKey === sessionKey);
@@ -170,26 +182,38 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   handleChatEvent: (event) => {
     set((state) => {
       const tabs = [...state.tabs];
-      const tabIndex = tabs.findIndex((t) => t.runId === event.runId);
+      let tabIndex = tabs.findIndex((t) => t.runId === event.runId);
+      if (tabIndex === -1) {
+        tabIndex = tabs.findIndex((t) => t.sessionKey === event.sessionKey);
+      }
       if (tabIndex === -1) return state;
 
       const tab = { ...tabs[tabIndex] };
 
-      if (event.state === "delta" && event.text) {
-        tab.streamBuffer += event.text;
+      const text = event.message?.content
+        ?.filter((c) => c.type === "text")
+        .map((c) => c.text)
+        .join("") ?? "";
+
+      if (event.state === "delta") {
+        tab.streamBuffer = text; // Server sends full accumulated text, not incremental
       } else if (event.state === "final") {
-        tab.messages = [
-          ...tab.messages,
-          { role: "assistant", content: tab.streamBuffer, timestamp: Date.now() },
-        ];
+        const finalText = text || tab.streamBuffer;
+        if (finalText) {
+          tab.messages = [
+            ...tab.messages,
+            { role: "assistant", content: finalText, timestamp: Date.now() },
+          ];
+        }
         tab.streamBuffer = "";
         tab.streaming = false;
         tab.runId = null;
-      } else if (event.state === "error") {
+      } else if (event.state === "error" || event.state === "aborted") {
         if (tab.streamBuffer) {
+          const suffix = event.state === "error" ? "\n\n[Error]" : "\n\n[Aborted]";
           tab.messages = [
             ...tab.messages,
-            { role: "assistant", content: tab.streamBuffer + "\n\n[Error]", timestamp: Date.now() },
+            { role: "assistant", content: tab.streamBuffer + suffix, timestamp: Date.now() },
           ];
         }
         tab.streamBuffer = "";
