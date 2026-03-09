@@ -46,6 +46,7 @@ impl GatewayClient {
             while let Some(msg_result) = stream.next().await {
                 match msg_result {
                     Ok(Message::Text(text)) => {
+                        tracing::debug!("WS incoming text message, len={}", text.len());
                         match serde_json::from_str::<IncomingFrame>(&text) {
                             Ok(IncomingFrame::Response(resp)) => {
                                 if let Some((_, sender)) = pending_clone.remove(&resp.id) {
@@ -65,7 +66,9 @@ impl GatewayClient {
                         tracing::info!("WS close frame received");
                         break;
                     }
-                    Ok(_) => {}
+                    Ok(_) => {
+                        tracing::debug!("WS non-text message received");
+                    }
                     Err(e) => {
                         tracing::error!("WS read error: {e}");
                         break;

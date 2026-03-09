@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import MDEditor from "@uiw/react-md-editor";
-import { agents as api } from "@/lib/tauri-api";
+import { agents as api, type AgentFile } from "@/lib/tauri-api";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -8,11 +8,10 @@ import { toast } from "sonner";
 
 interface Props {
   agentId: string;
-  workspace?: string;
 }
 
-export function FileEditor({ agentId, workspace }: Props) {
-  const [files, setFiles] = useState<string[]>([]);
+export function FileEditor({ agentId }: Props) {
+  const [files, setFiles] = useState<AgentFile[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [content, setContent] = useState("");
   const [originalContent, setOriginalContent] = useState("");
@@ -23,9 +22,13 @@ export function FileEditor({ agentId, workspace }: Props) {
   useEffect(() => {
     setLoadingFiles(true);
     api.filesList(agentId).then((f) => {
+      console.log("[FileEditor] files loaded:", f);
       setFiles(f);
       setLoadingFiles(false);
-    }).catch(() => setLoadingFiles(false));
+    }).catch((e) => {
+      console.error("[FileEditor] failed to load files:", e);
+      setLoadingFiles(false);
+    });
   }, [agentId]);
 
   useEffect(() => {
@@ -43,7 +46,7 @@ export function FileEditor({ agentId, workspace }: Props) {
     if (!selectedFile) return;
     setSaving(true);
     try {
-      await api.fileSet(agentId, selectedFile, content, workspace);
+      await api.fileSet(agentId, selectedFile, content);
       setOriginalContent(content);
       toast.success(`${selectedFile} saved`);
     } catch (e) {
@@ -51,7 +54,7 @@ export function FileEditor({ agentId, workspace }: Props) {
     } finally {
       setSaving(false);
     }
-  }, [agentId, selectedFile, content, workspace]);
+  }, [agentId, selectedFile, content]);
 
   const isDirty = content !== originalContent;
 
@@ -67,13 +70,13 @@ export function FileEditor({ agentId, workspace }: Props) {
             </>
           ) : files.map((file) => (
             <button
-              key={file}
-              onClick={() => setSelectedFile(file)}
+              key={file.name}
+              onClick={() => setSelectedFile(file.name)}
               className={`w-full text-left px-2 py-1.5 rounded text-sm truncate ${
-                selectedFile === file ? "bg-accent text-accent-foreground" : "hover:bg-muted"
+                selectedFile === file.name ? "bg-accent text-accent-foreground" : "hover:bg-muted"
               }`}
             >
-              {file}
+              {file.name}
             </button>
           ))}
         </div>

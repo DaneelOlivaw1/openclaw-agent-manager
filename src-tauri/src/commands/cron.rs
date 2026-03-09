@@ -8,7 +8,8 @@ pub async fn cron_list(
 ) -> Result<serde_json::Value, AppError> {
     let lock = state.gateway.read().await;
     let gw = lock.as_ref().ok_or(AppError::NotConnected)?;
-    gw.send_request("cron.list", None).await
+    let response = gw.send_request("cron.list", None).await?;
+    Ok(response.get("jobs").cloned().unwrap_or(serde_json::Value::Array(vec![])))
 }
 
 #[tauri::command]
@@ -68,5 +69,6 @@ pub async fn cron_runs(
 ) -> Result<serde_json::Value, AppError> {
     let lock = state.gateway.read().await;
     let gw = lock.as_ref().ok_or(AppError::NotConnected)?;
-    gw.send_request("cron.runs", Some(serde_json::json!({"cronId": cron_id}))).await
+    let response = gw.send_request("cron.runs", Some(serde_json::json!({"cronId": cron_id}))).await?;
+    Ok(response.get("entries").cloned().unwrap_or(serde_json::Value::Array(vec![])))
 }

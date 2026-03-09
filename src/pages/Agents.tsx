@@ -2,7 +2,6 @@ import { useEffect } from "react";
 import { Link } from "react-router-dom";
 import { useAgentsStore } from "@/stores/agents-store";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function Agents() {
@@ -27,14 +26,14 @@ export function Agents() {
             <Link key={agent.id} to={`/agents/${agent.id}`}>
               <Card className="hover:border-primary transition-colors cursor-pointer">
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-base">{agent.name}</CardTitle>
+                  <CardTitle className="text-base">
+                    {agent.identity?.emoji && <span className="mr-1">{agent.identity.emoji}</span>}
+                    {agent.name || agent.identity?.name || agent.id}
+                  </CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="text-sm text-muted-foreground space-y-1">
                     <div>ID: <code className="text-xs bg-muted px-1 rounded">{agent.id}</code></div>
-                    <div>Model: <Badge variant="outline">{agent.model}</Badge></div>
-                    {agent.workspace && <div className="truncate">Workspace: {agent.workspace}</div>}
-                    {agent.status && <div>Status: <Badge variant="secondary">{agent.status}</Badge></div>}
                   </div>
                 </CardContent>
               </Card>

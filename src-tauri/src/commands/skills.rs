@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use tauri::State;
 use crate::error::AppError;
 use crate::state::AppState;
@@ -9,7 +10,8 @@ pub async fn skills_status(
 ) -> Result<serde_json::Value, AppError> {
     let lock = state.gateway.read().await;
     let gw = lock.as_ref().ok_or(AppError::NotConnected)?;
-    gw.send_request("skills.status", Some(serde_json::json!({"agentId": agent_id}))).await
+    let response = gw.send_request("skills.status", Some(serde_json::json!({"agentId": agent_id}))).await?;
+    Ok(response.get("skills").cloned().unwrap_or(serde_json::Value::Array(vec![])))
 }
 
 #[tauri::command]
@@ -26,16 +28,11 @@ pub async fn skills_install(
 #[tauri::command]
 pub async fn skills_update(
     state: State<'_, AppState>,
-    agent_id: String,
     params: serde_json::Value,
 ) -> Result<serde_json::Value, AppError> {
     let lock = state.gateway.read().await;
     let gw = lock.as_ref().ok_or(AppError::NotConnected)?;
-    let mut merged = params;
-    if let Some(obj) = merged.as_object_mut() {
-        obj.insert("agentId".to_string(), serde_json::Value::String(agent_id));
-    }
-    gw.send_request("skills.update", Some(merged)).await
+    gw.send_request("skills.update", Some(params)).await
 }
 
 #[tauri::command]
@@ -44,5 +41,31 @@ pub async fn skills_bins(
 ) -> Result<serde_json::Value, AppError> {
     let lock = state.gateway.read().await;
     let gw = lock.as_ref().ok_or(AppError::NotConnected)?;
-    gw.send_request("skills.bins", None).await
+    let response = gw.send_request("skills.bins", None).await?;
+    Ok(response.get("bins").cloned().unwrap_or(serde_json::Value::Array(vec![])))
+}
+
+#[tauri::command]
+pub async fn skills_file_get(
+    file_path: String,
+) -> Result<String, AppError> {
+    let path = PathBuf::from(&file_path);
+    if !path.exists() {
+        return Err(AppError::Other(format!("Skill file not found: {}", file_path)));
+    }
+    let content = tokio::fs::read_to_string(&path).await?;
+    Ok(content)
+}
+
+#[tauri::command]
+pub async fn skills_file_set(
+    file_path: String,
+    content: String,
+) -> Result<(), AppError> {
+    let path = PathBuf::from(&file_path);
+    if !path.exists() {
+        return Err(AppError::Other(format!("Skill file not found: {}", file_path)));
+    }
+    tokio::fs::write(&path, content).await?;
+    Ok(())
 }

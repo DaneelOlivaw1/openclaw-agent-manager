@@ -14,64 +14,60 @@ interface McpServer {
   env: Record<string, string>;
 }
 
+interface McpConfig {
+  mcpServers: Record<
+    string,
+    { command: string; args?: string[]; env?: Record<string, string> }
+  >;
+}
+
 interface Props {
   agentId: string;
 }
 
-function parseToolsMd(content: string): McpServer[] {
-  const servers: McpServer[] = [];
-  const regex = /```json\s+(\S+)\s*\n([\s\S]*?)```/g;
-  let match;
-  while ((match = regex.exec(content)) !== null) {
-    try {
-      const config = JSON.parse(match[2]);
-      servers.push({
-        name: match[1],
-        command: config.command || "",
-        args: config.args || [],
-        env: config.env || {},
-      });
-    } catch {
-      // Skip malformed entries
-    }
+function parseMcpConfig(raw: string): McpServer[] {
+  try {
+    const config: McpConfig = JSON.parse(raw);
+    const servers = config.mcpServers ?? {};
+    return Object.entries(servers).map(([name, entry]) => ({
+      name,
+      command: entry.command ?? "",
+      args: entry.args ?? [],
+      env: entry.env ?? {},
+    }));
+  } catch {
+    return [];
   }
-  return servers;
 }
 
-function serializeMcpSection(servers: McpServer[]): string {
-  let md = "## MCP Servers\n\n";
+function serializeMcpConfig(servers: McpServer[]): string {
+  const mcpServers: McpConfig["mcpServers"] = {};
   for (const server of servers) {
-    const config = { command: server.command, args: server.args, env: server.env };
-    md += "```json " + server.name + "\n" + JSON.stringify(config, null, 2) + "\n```\n\n";
+    const entry: McpConfig["mcpServers"][string] = { command: server.command };
+    if (server.args.length > 0) entry.args = server.args;
+    if (Object.keys(server.env).length > 0) entry.env = server.env;
+    mcpServers[server.name] = entry;
   }
-  return md;
-}
-
-function updateToolsMd(originalContent: string, servers: McpServer[]): string {
-  const mcpSection = serializeMcpSection(servers);
-  const mcpHeaderRegex = /## MCP Servers[\s\S]*$/;
-  if (mcpHeaderRegex.test(originalContent)) {
-    return originalContent.replace(mcpHeaderRegex, mcpSection);
-  }
-  return originalContent + "\n\n" + mcpSection;
+  return JSON.stringify({ mcpServers }, null, 2) + "\n";
 }
 
 export function McpEditor({ agentId }: Props) {
   const [servers, setServers] = useState<McpServer[]>([]);
-  const [originalContent, setOriginalContent] = useState("");
+  const [originalJson, setOriginalJson] = useState("");
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    api.fileGet(agentId, "TOOLS.md")
-      .then((content) => {
-        setOriginalContent(content);
-        setServers(parseToolsMd(content));
+    api
+      .mcpGet(agentId)
+      .then((raw) => {
+        setOriginalJson(raw);
+        setServers(parseMcpConfig(raw));
         setLoading(false);
       })
       .catch(() => {
-        setOriginalContent("");
+        setOriginalJson("");
         setServers([]);
         setLoading(false);
       });
@@ -80,19 +76,24 @@ export function McpEditor({ agentId }: Props) {
   const save = useCallback(async () => {
     setSaving(true);
     try {
-      const md = updateToolsMd(originalContent, servers);
-      await api.fileSet(agentId, "TOOLS.md", md);
-      setOriginalContent(md);
+      const json = serializeMcpConfig(servers);
+      await api.mcpSet(agentId, json);
+      setOriginalJson(json);
       toast.success("MCP config saved");
     } catch (e) {
       toast.error(`Save failed: ${e}`);
     } finally {
       setSaving(false);
     }
-  }, [agentId, servers, originalContent]);
+  }, [agentId, servers]);
+
+  const isDirty = serializeMcpConfig(servers) !== originalJson;
 
   const addServer = () => {
-    setServers([...servers, { name: "new-server", command: "", args: [], env: {} }]);
+    setServers([
+      ...servers,
+      { name: "new-server", command: "", args: [], env: {} },
+    ]);
   };
 
   const removeServer = (index: number) => {
@@ -115,7 +116,7 @@ export function McpEditor({ agentId }: Props) {
           <Button size="sm" variant="outline" onClick={addServer}>
             <Plus className="h-3 w-3 mr-1" /> Add Server
           </Button>
-          <Button size="sm" onClick={save} disabled={saving}>
+          <Button size="sm" onClick={save} disabled={!isDirty || saving}>
             {saving ? "Saving..." : "Save"}
           </Button>
         </div>
@@ -131,7 +132,11 @@ export function McpEditor({ agentId }: Props) {
                 className="font-mono text-sm"
                 placeholder="server-name"
               />
-              <Button size="sm" variant="ghost" onClick={() => removeServer(i)}>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => removeServer(i)}
+              >
                 <Trash2 className="h-3 w-3" />
               </Button>
             </div>
@@ -147,18 +152,27 @@ export function McpEditor({ agentId }: Props) {
               />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground">Args (comma-separated)</label>
+              <label className="text-xs text-muted-foreground">
+                Args (comma-separated)
+              </label>
               <Input
                 value={server.args.join(", ")}
-                onChange={(e) => updateServer(i, {
-                  args: e.target.value.split(",").map((s) => s.trim()).filter(Boolean),
-                })}
+                onChange={(e) =>
+                  updateServer(i, {
+                    args: e.target.value
+                      .split(",")
+                      .map((s) => s.trim())
+                      .filter(Boolean),
+                  })
+                }
                 placeholder="-y, @some/mcp-server"
                 className="font-mono text-sm mt-1"
               />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground">Environment Variables</label>
+              <label className="text-xs text-muted-foreground">
+                Environment Variables
+              </label>
               {Object.entries(server.env).map(([key, value]) => (
                 <div key={key} className="flex gap-2 mt-1">
                   <Input
@@ -174,7 +188,11 @@ export function McpEditor({ agentId }: Props) {
                   />
                   <Input
                     value={value}
-                    onChange={(e) => updateServer(i, { env: { ...server.env, [key]: e.target.value } })}
+                    onChange={(e) =>
+                      updateServer(i, {
+                        env: { ...server.env, [key]: e.target.value },
+                      })
+                    }
                     placeholder="value"
                     className="font-mono text-sm flex-1"
                   />
@@ -183,7 +201,9 @@ export function McpEditor({ agentId }: Props) {
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={() => updateServer(i, { env: { ...server.env, "": "" } })}
+                onClick={() =>
+                  updateServer(i, { env: { ...server.env, "": "" } })
+                }
                 className="mt-1 text-xs"
               >
                 + Add variable

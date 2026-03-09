@@ -1,19 +1,23 @@
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tauri::Emitter;
 use tokio::sync::{broadcast, RwLock};
 
 use crate::gateway::client::GatewayClient;
+use crate::gateway::device_auth::{
+    build_device_auth_payload, public_key_raw_base64url, sign_payload, DeviceIdentity,
+};
 
 pub struct ReconnectManager {
     url: String,
     token: String,
+    device_identity: Option<DeviceIdentity>,
 }
 
 impl ReconnectManager {
-    pub fn new(url: String, token: String) -> Self {
-        Self { url, token }
+    pub fn new(url: String, token: String, device_identity: Option<DeviceIdentity>) -> Self {
+        Self { url, token, device_identity }
     }
 
     pub fn start(
@@ -24,6 +28,7 @@ impl ReconnectManager {
         let client_clone = client.clone();
         let url = self.url;
         let token = self.token;
+        let device_identity = self.device_identity;
 
         tauri::async_runtime::spawn(async move {
             let mut backoff = Duration::from_secs(1);
@@ -73,22 +78,63 @@ impl ReconnectManager {
 
                         tracing::debug!("Received connect.challenge: {:?}", challenge.payload);
 
-                        let connect_params = serde_json::json!({
+                        let nonce = challenge
+                            .payload
+                            .as_ref()
+                            .and_then(|p| p.get("nonce"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+
+                        let auth = serde_json::json!({
+                            "token": token
+                        });
+
+                        let mut connect_params = serde_json::json!({
                             "minProtocol": 3,
                             "maxProtocol": 3,
                             "client": {
-                                "id": "cli",
+                                "id": "gateway-client",
                                 "displayName": "OpenClaw Desktop",
                                 "version": "0.1.0",
                                 "platform": std::env::consts::OS,
-                                "mode": "cli"
+                                "mode": "backend"
                             },
                             "role": "operator",
                             "scopes": ["operator.admin"],
-                            "auth": {
-                                "token": token
-                            }
+                            "auth": auth
                         });
+
+                        if let Some(ref di) = device_identity {
+                            let signed_at_ms = SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap()
+                                .as_millis() as u64;
+
+                            let payload = build_device_auth_payload(
+                                &di.device_id,
+                                "gateway-client",
+                                "backend",
+                                "operator",
+                                &["operator.admin"],
+                                signed_at_ms,
+                                &token,
+                                nonce.as_deref(),
+                            );
+
+                            let signature = sign_payload(&di.private_key_pem, &payload);
+                            let public_key = public_key_raw_base64url(&di.public_key_pem);
+
+                            let mut device = serde_json::json!({
+                                "id": di.device_id,
+                                "publicKey": public_key,
+                                "signature": signature,
+                                "signedAt": signed_at_ms
+                            });
+                            if let Some(ref n) = nonce {
+                                device["nonce"] = serde_json::Value::String(n.clone());
+                            }
+                            connect_params["device"] = device;
+                        }
 
                         match gw.send_request("connect", Some(connect_params)).await {
                             Ok(hello) => {

@@ -1,12 +1,12 @@
 [package]
-name = "openclaw-desktop"
+name = "openclaw-agent-manager"
 version = "0.1.0"
-description = "OpenClaw Desktop"
+description = "OpenClaw Agent Manager"
 authors = ["you"]
 edition = "2021"
 
 [lib]
-name = "openclaw_desktop_lib"
+name = "openclaw_agent_manager_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -28,6 +28,8 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dashmap = "6"
+ed25519-dalek = { version = "2", features = ["pkcs8", "pem"] }
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"

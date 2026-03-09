@@ -8,7 +8,8 @@ pub async fn sessions_list(
 ) -> Result<serde_json::Value, AppError> {
     let lock = state.gateway.read().await;
     let gw = lock.as_ref().ok_or(AppError::NotConnected)?;
-    gw.send_request("sessions.list", None).await
+    let response = gw.send_request("sessions.list", None).await?;
+    Ok(response.get("sessions").cloned().unwrap_or(serde_json::Value::Array(vec![])))
 }
 
 #[tauri::command]

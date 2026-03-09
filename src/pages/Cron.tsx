@@ -6,6 +6,20 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Play, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import type { CronSchedule } from "@/lib/tauri-api";
+
+function formatSchedule(schedule: CronSchedule): string {
+  switch (schedule.kind) {
+    case "cron":
+      return schedule.tz ? `${schedule.expr} (${schedule.tz})` : schedule.expr;
+    case "every":
+      return `every ${Math.round(schedule.everyMs / 1000)}s`;
+    case "at":
+      return `at ${new Date(schedule.atMs).toLocaleString()}`;
+    default:
+      return JSON.stringify(schedule);
+  }
+}
 
 export function Cron() {
   const { jobs, loading, error, fetch, run, remove } = useCronStore();
@@ -54,9 +68,11 @@ export function Cron() {
               </CardHeader>
               <CardContent>
                 <div className="text-xs text-muted-foreground space-y-1">
-                  <div>Schedule: <code className="bg-muted px-1 rounded">{job.schedule}</code></div>
-                  <div>Agent: {job.agentId}</div>
-                  {job.lastRun && <div>Last run: {job.lastRun}</div>}
+                  <div>Schedule: <code className="bg-muted px-1 rounded">{formatSchedule(job.schedule)}</code></div>
+                  {job.agentId && <div>Agent: {job.agentId}</div>}
+                  {job.state?.lastRunAtMs && (
+                    <div>Last run: {new Date(job.state.lastRunAtMs).toLocaleString()}</div>
+                  )}
                 </div>
                 <div className="flex gap-2 mt-3">
                   <Button size="sm" variant="outline" onClick={() => handleRun(job.id)}>

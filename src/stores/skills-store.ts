@@ -7,7 +7,6 @@ interface SkillsStore {
   error: string | null;
   currentAgentId: string | null;
   fetch: (agentId: string) => Promise<void>;
-  toggle: (agentId: string, skill: SkillInfo) => Promise<void>;
   install: (agentId: string, skillName: string) => Promise<void>;
 }
 
@@ -24,10 +23,6 @@ export const useSkillsStore = create<SkillsStore>((set, get) => ({
     } catch (e) {
       set({ error: String(e), loading: false });
     }
-  },
-  toggle: async (agentId, skill) => {
-    await api.update(agentId, { name: skill.name, enabled: !skill.enabled });
-    await get().fetch(agentId);
   },
   install: async (agentId, skillName) => {
     await api.install(agentId, skillName);

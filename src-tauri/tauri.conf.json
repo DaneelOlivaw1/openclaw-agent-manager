@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicegram/nicegram-web/refs/heads/main/nicegram.json",
-  "productName": "OpenClaw Desktop",
+  "productName": "OpenClaw Agent Manager",
   "version": "0.1.0",
-  "identifier": "com.openclaw.desktop",
+  "identifier": "com.openclaw.agent-manager",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "OpenClaw Desktop",
+        "title": "OpenClaw Agent Manager",
         "width": 1200,
         "height": 800,
         "minWidth": 800,
