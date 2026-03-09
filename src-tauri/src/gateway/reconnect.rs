@@ -25,7 +25,7 @@ impl ReconnectManager {
         let url = self.url;
         let token = self.token;
 
-        tokio::spawn(async move {
+        tauri::async_runtime::spawn(async move {
             let mut backoff = Duration::from_secs(1);
             let max_backoff = Duration::from_secs(30);
 
