@@ -1,78 +1,69 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Outgoing request envelope
+/// Outgoing request frame
 #[derive(Debug, Clone, Serialize)]
-pub struct GatewayRequest {
+pub struct RequestFrame {
+    #[serde(rename = "type")]
+    pub frame_type: String, // always "req"
     pub id: String,
     pub method: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub params: Option<Value>,
 }
 
-/// Incoming response envelope
-#[derive(Debug, Clone, Deserialize)]
-pub struct GatewayResponse {
-    pub id: String,
-    #[serde(default)]
-    pub result: Option<Value>,
-    #[serde(default)]
-    pub error: Option<GatewayError>,
+impl RequestFrame {
+    pub fn new(id: String, method: String, params: Option<Value>) -> Self {
+        Self {
+            frame_type: "req".to_string(),
+            id,
+            method,
+            params,
+        }
+    }
 }
 
+/// Error shape from server
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct GatewayError {
-    pub code: i32,
+pub struct ErrorShape {
+    pub code: String,
     pub message: String,
+    #[serde(default)]
+    pub details: Option<Value>,
+    #[serde(default)]
+    pub retryable: Option<bool>,
 }
 
-/// Server-push broadcast message
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct GatewayBroadcast {
-    pub method: String,
-    pub params: Value,
-}
-
-/// Union type for parsing incoming WS messages
+/// Incoming response frame
 #[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-pub enum IncomingMessage {
-    Response(GatewayResponse),
-    Broadcast(GatewayBroadcast),
-}
-
-/// Chat broadcast event payload
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ChatEvent {
-    pub run_id: String,
-    pub agent_id: String,
-    pub state: String,
-    #[serde(default)]
-    pub text: Option<String>,
-    #[serde(default)]
-    pub message: Option<Value>,
-    #[serde(default)]
-    pub session_key: Option<String>,
-}
-
-/// Agent info from agents.list
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct AgentInfo {
+pub struct ResponseFrame {
     pub id: String,
-    pub name: String,
-    pub model: String,
+    pub ok: bool,
     #[serde(default)]
-    pub workspace: Option<String>,
+    pub payload: Option<Value>,
     #[serde(default)]
-    pub status: Option<String>,
+    pub error: Option<ErrorShape>,
 }
 
-/// Config response from config.get
+/// Incoming event frame (server-push)
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ConfigResponse {
-    pub config: Value,
-    pub hash: String,
+pub struct EventFrame {
+    pub event: String,
+    #[serde(default)]
+    pub payload: Option<Value>,
+    #[serde(default)]
+    pub seq: Option<u64>,
+}
+
+/// Discriminated union for ALL incoming messages
+/// The "type" field discriminates: "res" = response, "event" = event
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type")]
+pub enum IncomingFrame {
+    #[serde(rename = "res")]
+    Response(ResponseFrame),
+    #[serde(rename = "event")]
+    Event(EventFrame),
 }
 
 #[cfg(test)]
@@ -81,27 +72,51 @@ mod tests {
 
     #[test]
     fn parse_response() {
-        let json = r#"{"id":"abc","result":{"agents":[]}}"#;
-        let msg: IncomingMessage = serde_json::from_str(json).unwrap();
-        assert!(matches!(msg, IncomingMessage::Response(_)));
+        let json = r#"{"type":"res","id":"abc","ok":true,"payload":{"agents":[]}}"#;
+        let msg: IncomingFrame = serde_json::from_str(json).unwrap();
+        assert!(matches!(msg, IncomingFrame::Response(_)));
+        if let IncomingFrame::Response(r) = msg {
+            assert!(r.ok);
+            assert_eq!(r.id, "abc");
+        }
     }
 
     #[test]
-    fn parse_broadcast() {
-        let json = r#"{"method":"chat","params":{"runId":"r1","agentId":"a1","state":"delta","text":"hi"}}"#;
-        let msg: IncomingMessage = serde_json::from_str(json).unwrap();
-        assert!(matches!(msg, IncomingMessage::Broadcast(_)));
+    fn parse_event() {
+        let json = r#"{"type":"event","event":"chat","payload":{"runId":"r1","sessionKey":"s1","seq":1,"state":"delta"}}"#;
+        let msg: IncomingFrame = serde_json::from_str(json).unwrap();
+        assert!(matches!(msg, IncomingFrame::Event(_)));
+        if let IncomingFrame::Event(e) = msg {
+            assert_eq!(e.event, "chat");
+        }
+    }
+
+    #[test]
+    fn parse_challenge() {
+        let json = r#"{"type":"event","event":"connect.challenge","payload":{"nonce":"abc-123","ts":1234567890}}"#;
+        let msg: IncomingFrame = serde_json::from_str(json).unwrap();
+        if let IncomingFrame::Event(e) = msg {
+            assert_eq!(e.event, "connect.challenge");
+            let nonce = e.payload.as_ref().unwrap()["nonce"].as_str().unwrap();
+            assert_eq!(nonce, "abc-123");
+        }
+    }
+
+    #[test]
+    fn parse_error_response() {
+        let json = r#"{"type":"res","id":"x","ok":false,"error":{"code":"INVALID_REQUEST","message":"bad params"}}"#;
+        let msg: IncomingFrame = serde_json::from_str(json).unwrap();
+        if let IncomingFrame::Response(r) = msg {
+            assert!(!r.ok);
+            assert_eq!(r.error.unwrap().code, "INVALID_REQUEST");
+        }
     }
 
     #[test]
     fn serialize_request() {
-        let req = GatewayRequest {
-            id: "test-id".into(),
-            method: "agents.list".into(),
-            params: None,
-        };
+        let req = RequestFrame::new("test-id".into(), "agents.list".into(), None);
         let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains(r#""type":"req""#));
         assert!(json.contains("agents.list"));
-        assert!(!json.contains("params"));
     }
 }

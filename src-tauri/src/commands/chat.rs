@@ -5,19 +5,17 @@ use crate::state::AppState;
 #[tauri::command]
 pub async fn chat_send(
     state: State<'_, AppState>,
-    agent_id: String,
+    session_key: String,
     message: String,
-    session_key: Option<String>,
+    idempotency_key: String,
 ) -> Result<serde_json::Value, AppError> {
     let lock = state.gateway.read().await;
     let gw = lock.as_ref().ok_or(AppError::NotConnected)?;
-    let mut params = serde_json::json!({
-        "agentId": agent_id,
+    let params = serde_json::json!({
+        "sessionKey": session_key,
         "message": message,
+        "idempotencyKey": idempotency_key,
     });
-    if let Some(key) = session_key {
-        params["sessionKey"] = serde_json::Value::String(key);
-    }
     gw.send_request("chat.send", Some(params)).await
 }
 
@@ -34,9 +32,14 @@ pub async fn chat_history(
 #[tauri::command]
 pub async fn chat_abort(
     state: State<'_, AppState>,
-    run_id: String,
+    session_key: String,
+    run_id: Option<String>,
 ) -> Result<serde_json::Value, AppError> {
     let lock = state.gateway.read().await;
     let gw = lock.as_ref().ok_or(AppError::NotConnected)?;
-    gw.send_request("chat.abort", Some(serde_json::json!({"runId": run_id}))).await
+    let mut params = serde_json::json!({"sessionKey": session_key});
+    if let Some(rid) = run_id {
+        params["runId"] = serde_json::Value::String(rid);
+    }
+    gw.send_request("chat.abort", Some(params)).await
 }

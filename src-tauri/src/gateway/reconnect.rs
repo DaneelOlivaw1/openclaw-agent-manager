@@ -35,13 +35,67 @@ impl ReconnectManager {
 
                 match GatewayClient::connect(&url).await {
                     Ok(gw) => {
-                        match gw.handshake(&token).await {
-                            Ok(_) => {
-                                tracing::info!("Gateway connected and authenticated");
+                        let mut rx = gw.subscribe();
+
+                        let challenge_result = tokio::time::timeout(
+                            Duration::from_secs(5),
+                            async {
+                                loop {
+                                    match rx.recv().await {
+                                        Ok(evt) if evt.event == "connect.challenge" => {
+                                            return Ok(evt);
+                                        }
+                                        Ok(_) => continue,
+                                        Err(broadcast::error::RecvError::Closed) => {
+                                            return Err("broadcast closed before challenge");
+                                        }
+                                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                                            tracing::warn!("Lagged {n} while waiting for challenge");
+                                            continue;
+                                        }
+                                    }
+                                }
+                            },
+                        )
+                        .await;
+
+                        let challenge = match challenge_result {
+                            Ok(Ok(evt)) => evt,
+                            Ok(Err(e)) => {
+                                tracing::error!("Challenge wait failed: {e}");
+                                continue;
+                            }
+                            Err(_) => {
+                                tracing::error!("Timed out waiting for connect.challenge");
+                                continue;
+                            }
+                        };
+
+                        tracing::debug!("Received connect.challenge: {:?}", challenge.payload);
+
+                        let connect_params = serde_json::json!({
+                            "minProtocol": 3,
+                            "maxProtocol": 3,
+                            "client": {
+                                "id": "cli",
+                                "displayName": "OpenClaw Desktop",
+                                "version": "0.1.0",
+                                "platform": std::env::consts::OS,
+                                "mode": "cli"
+                            },
+                            "role": "operator",
+                            "scopes": ["operator.admin"],
+                            "auth": {
+                                "token": token
+                            }
+                        });
+
+                        match gw.send_request("connect", Some(connect_params)).await {
+                            Ok(hello) => {
+                                tracing::info!("Gateway authenticated: {:?}", hello);
                                 let _ = app_handle.emit("gateway:status", "connected");
                                 backoff = Duration::from_secs(1);
 
-                                let mut rx = gw.subscribe();
                                 let closed = gw.closed();
                                 {
                                     let mut lock = client_clone.write().await;
@@ -52,9 +106,12 @@ impl ReconnectManager {
                                     tokio::select! {
                                         result = rx.recv() => {
                                             match result {
-                                                Ok(bcast) => {
-                                                    let event_name = format!("gw:{}", bcast.method);
-                                                    let _ = app_handle.emit(&event_name, bcast.params.clone());
+                                                Ok(evt) => {
+                                                    let event_name = format!("gw:{}", evt.event);
+                                                    let _ = app_handle.emit(
+                                                        &event_name,
+                                                        evt.payload.clone(),
+                                                    );
                                                 }
                                                 Err(broadcast::error::RecvError::Closed) => break,
                                                 Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -79,7 +136,7 @@ impl ReconnectManager {
                                 let _ = app_handle.emit("gateway:status", "disconnected");
                             }
                             Err(e) => {
-                                tracing::error!("Handshake failed: {e}");
+                                tracing::error!("Connect request failed: {e}");
                             }
                         }
                     }

@@ -19,8 +19,8 @@ type WsSink = SplitSink<
 
 pub struct GatewayClient {
     sink: Arc<Mutex<WsSink>>,
-    pending: Arc<DashMap<String, oneshot::Sender<GatewayResponse>>>,
-    broadcast_tx: broadcast::Sender<GatewayBroadcast>,
+    pending: Arc<DashMap<String, oneshot::Sender<ResponseFrame>>>,
+    broadcast_tx: broadcast::Sender<EventFrame>,
     closed: Arc<Notify>,
     _reader_handle: tokio::task::JoinHandle<()>,
 }
@@ -33,7 +33,7 @@ impl GatewayClient {
 
         let (sink, mut stream) = ws_stream.split();
         let sink = Arc::new(Mutex::new(sink));
-        let pending: Arc<DashMap<String, oneshot::Sender<GatewayResponse>>> =
+        let pending: Arc<DashMap<String, oneshot::Sender<ResponseFrame>>> =
             Arc::new(DashMap::new());
         let (broadcast_tx, _) = broadcast::channel(256);
 
@@ -46,14 +46,14 @@ impl GatewayClient {
             while let Some(msg_result) = stream.next().await {
                 match msg_result {
                     Ok(Message::Text(text)) => {
-                        match serde_json::from_str::<IncomingMessage>(&text) {
-                            Ok(IncomingMessage::Response(resp)) => {
+                        match serde_json::from_str::<IncomingFrame>(&text) {
+                            Ok(IncomingFrame::Response(resp)) => {
                                 if let Some((_, sender)) = pending_clone.remove(&resp.id) {
                                     let _ = sender.send(resp);
                                 }
                             }
-                            Ok(IncomingMessage::Broadcast(bcast)) => {
-                                let _ = broadcast_tx_clone.send(bcast);
+                            Ok(IncomingFrame::Event(evt)) => {
+                                let _ = broadcast_tx_clone.send(evt);
                             }
                             Err(e) => {
                                 tracing::warn!("Failed to parse WS message: {e}");
@@ -65,7 +65,7 @@ impl GatewayClient {
                         tracing::info!("WS close frame received");
                         break;
                     }
-                    Ok(_) => {} // ignore ping/pong/binary
+                    Ok(_) => {}
                     Err(e) => {
                         tracing::error!("WS read error: {e}");
                         break;
@@ -91,11 +91,7 @@ impl GatewayClient {
         params: Option<serde_json::Value>,
     ) -> Result<serde_json::Value, AppError> {
         let id = Uuid::new_v4().to_string();
-        let req = GatewayRequest {
-            id: id.clone(),
-            method: method.to_string(),
-            params,
-        };
+        let req = RequestFrame::new(id.clone(), method.to_string(), params);
 
         let (tx, rx) = oneshot::channel();
         self.pending.insert(id.clone(), tx);
@@ -119,27 +115,19 @@ impl GatewayClient {
             })?
             .map_err(|_| AppError::Gateway("Response channel closed".into()))?;
 
-        if let Some(err) = resp.error {
-            return Err(AppError::Gateway(err.message));
+        if !resp.ok {
+            return Err(AppError::Gateway(
+                resp.error
+                    .map(|e| e.message)
+                    .unwrap_or_else(|| "unknown error".into()),
+            ));
         }
 
-        resp.result
-            .ok_or_else(|| AppError::Gateway("Empty result".into()))
+        Ok(resp.payload.unwrap_or(serde_json::Value::Null))
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<GatewayBroadcast> {
+    pub fn subscribe(&self) -> broadcast::Receiver<EventFrame> {
         self.broadcast_tx.subscribe()
-    }
-
-    pub async fn handshake(&self, token: &str) -> Result<serde_json::Value, AppError> {
-        self.send_request(
-            "connect",
-            Some(serde_json::json!({
-                "token": token,
-                "role": "admin"
-            })),
-        )
-        .await
     }
 
     pub fn closed(&self) -> Arc<Notify> {
