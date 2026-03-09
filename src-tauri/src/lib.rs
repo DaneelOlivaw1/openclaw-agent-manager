@@ -17,10 +17,10 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             let handle = app.handle().clone();
-            let manager = gateway::reconnect::ReconnectManager::new(
-                "ws://127.0.0.1:18789".to_string(),
-                "".to_string(),
-            );
+            let token = std::env::var("OPENCLAW_GATEWAY_TOKEN").unwrap_or_default();
+            let url = std::env::var("OPENCLAW_GATEWAY_URL")
+                .unwrap_or_else(|_| "ws://127.0.0.1:18789".to_string());
+            let manager = gateway::reconnect::ReconnectManager::new(url, token);
             let client = manager.start(handle);
             app.manage(AppState { gateway: client });
             Ok(())
